@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style> /* set the CSS */
+	* {
+		font-family: roboto, helvetica, arial, sans-serif;
+		font-weight: 100;
+	}
+
+	.line {
+		fill: none;
+		stroke: black;
+		stroke-width: 0.5px;
+	}
+
+	.line.highlight {
+		stroke-width: 2px;
+		stroke: #00aaff;
+	}
+
+	.limit_line {
+		stroke: red;
+		stroke-width: .5px;
+	}
+
+	.laser_spectrum {
+		fill: blue;
+		opacity: .1;
+	}
+
+	.domain, .tick>line {
+		stroke: #999;
+	}
+
+	.tick>text {
+		fill: #999;
+	}
+
+	.line { stroke-opacity: 0.05; }
+	.line.active { stroke-opacity: 1; }
+	li { opacity: 0.1; display: none; }
+	li.active { opacity: 1; display: block; }
+	li.highlight { opacity: 1; display: block; color:#00aaff }
+	ul{
+		padding: 0;
+	}
+	#left {
+		width: 45%;
+		float: left;
+		padding-left: 30px;
+	}
+	#result {
+		width:45%;
+		float: right;
+	}
+
+	label {
+		width: 50%;
+		display: inline-block;
+		text-align: right;
+	}
+	input[type=number] {
+		width:5em;
+		text-align: right;
+	}
+
+	#page {
+		width: 960px;
+		margin: auto;
+	}
+	
+	footer {
+		clear: both;
+		border-top: 1px dotted lightgray;
+		padding: .5em;
+		text-align: center;
+		position: absolute;
+		bottom: 0;
+		width: 100%;
+		font-size: smaller;
+	}
+	
+	a { text-decoration: none; color: #666; }
+
+
+</style>
+<body>
+	<div id="page">
+		<h1>Laser safety window materials for your experiment</h1>
+		<p>
+			Enter your experiment parameters and see material suggestions. 
+			Keep in mind that these are only suggestions. After selecting one 
+			please always countercheck with your own measurement equipment if it
+			provides the level of safety required for your application.
+		</p>
+		<div id="chart"></div>
+		<div>
+			<div id="left">
+				<form>
+					<h2>Laser parameters:</h2>
+					<label>Wavelength (nm)</label>
+					<input type="number" placeholder="Wavelength in nm" onchange="change_wavelength(this.value)" value="520" min="200" max="1200"/><br/>
+					<label>Wavelength variance (nm)</label>
+					<input type="number" placeholder="Wavelength variance in nm" onchange="change_wavelength_variance(this.value)" value="2" min="0" /><br/>
+					<label>Max Transmission (%)</label>
+					<input type="number" placeholder="Wavelength variance in nm" onchange="change_max_transmission(this.value)" value="0.5" step="0.1" min="0" max="100" /><br/>
+				</form>
+				<div>
+					
+				</div>
+			</div>
+			<div id="result">
+				<h2>Blocking but transparent materials:</h2>
+				<ul id="material_list">
+
+				</ul>
+			</div>
+		</div>
+	</div>
+	<footer>
+		<span>Created by Laser4DIY - a project from the <a href="http://fablab-muenchen.de">FabLab München</a></span>
+		 &bull; <a href="Protokoll.pdf">Documentation</a>
+		 &bull; <a href="mailto:info@laser4diy.org">Contact</a>
+		
+	</footer>
+	<!-- load the d3.js library -->    	
+	<script src="https://d3js.org/d3.v4.min.js"></script>
+	<script>
+		var wavelength_range = {min: 350, max: 1100};
+		var wavelength = 520;
+		var wavelength_variance = 2;
+		var max_transmission = 0.5;
+		function change_wavelength(value) {
+			wavelength = parseFloat(value);
+			update_filter(wavelength - wavelength_variance, wavelength + wavelength_variance, max_transmission);
+		}
+		function change_wavelength_variance(value) {
+			wavelength_variance = Math.max(parseFloat(value), 0.2);
+			update_filter(wavelength - wavelength_variance, wavelength + wavelength_variance, max_transmission);
+		}
+		function change_max_transmission(value) {
+			max_transmission = Math.max(parseFloat(value), 0);
+			update_filter(wavelength - wavelength_variance, wavelength + wavelength_variance, max_transmission);
+		}
+
+		// set the dimensions and margins of the graph
+		var margin = {top: 20, right: 20, bottom: 30, left: 30},
+				width = 960 - margin.left - margin.right,
+				height = 500 - margin.top - margin.bottom;
+
+		// set the ranges
+		var x = d3.scaleLinear().range([0, width]);
+		var y = d3.scaleLinear().range([height, 0]);
+
+		// Scale the range of the data
+		x.domain([wavelength_range.min, wavelength_range.max]);
+		y.domain([0, 110]);
+
+
+		// define the line
+		var valueline = d3.line()
+				.x(function (d) {
+					return x(d.wavelength_nm);
+				})
+				.y(function (d) {
+					return y(d.transmission_perc_smoothed);
+				});
+
+		// append the svg obgect to the body of the page
+		// appends a 'group' element to 'svg'
+		// moves the 'group' element to the top left margin
+		var svg = d3.select("#chart").append("svg")
+				.attr("width", width + margin.left + margin.right)
+				.attr("height", height + margin.top + margin.bottom)
+				.append("g")
+				.attr("transform",
+						"translate(" + margin.left + "," + margin.top + ")");
+		// Add the X Axis
+		svg.append("g")
+				.attr("transform", "translate(0," + height + ")")
+				.attr("class", "axis")
+				.call(d3.axisBottom(x));
+
+		// Add the Y Axis
+		svg.append("g")
+				.attr("class", "axis")
+				.call(d3.axisLeft(y));
+
+
+		var transmission_data = {};
+		function init_data() {
+
+			// Get the data
+			var data_sets = [
+				"bottleglass-ordinary_brown.csv",
+				"makrolon-blue_541.csv",
+				"makrolon-bright_blue_538.csv",
+				"makrolon-bright_green_634.csv",
+				"makrolon-bright_yellow_Y06.csv",
+				"makrolon-citrus_yellow_Y07.csv",
+				"makrolon-dark_blue_543.csv",
+				"makrolon-dark_brown_819.csv",
+				"makrolon-dark_green_636.csv",
+				"makrolon-dark_grey_752.csv",
+				"makrolon-farblos.csv",
+				"makrolon-flieder_blue_539.csv",
+				"makrolon-grey_751.csv",
+				"makrolon-orange_209.csv",
+				"makrolon-orange_red_326.csv",
+				"makrolon-petrol_green_637.csv",
+				"makrolon-red_324.csv",
+				"makrolon-redish_brown_818.csv",
+				"makrolon-turkish_blue_543.csv",
+				"makrolon-uv_orange_2208.csv",
+				"makrolon-violet_402.csv",
+				"makrolon-wine_red_327.csv",
+				"makrolon-yellowish_green_638.csv",
+				"plexiglas_0A000.csv",
+				"plexiglas_0F00.csv",
+				"plexiglas_1C33.csv",
+				"plexiglas_2C01.csv",
+				"plexiglas_2C04.csv",
+				"plexiglas_3C01.csv",
+				"plexiglas_3C02.csv",
+				"plexiglas_3C50.csv",
+				"plexiglas_3H00.csv",
+				"plexiglas_3H55.csv",
+				"plexiglas_5C01.csv",
+				"plexiglas_5C18.csv",
+				"plexiglas_5C50.csv",
+				"plexiglas_6C02.csv",
+				"plexiglas_6C77.csv",
+				"plexiglas_7A670.csv",
+				"plexiglas_7C14.csv",
+				"plexiglas_7C22.csv",
+				"plexiglas_7C27.csv",
+				"plexiglas_7C82.csv",
+				"plexiglas_7C83.csv",
+				"plexiglas_8A570.csv",
+				"plexiglas_8C01.csv",
+				"plexiglas_WH02.csv",
+				"plexiglas_WH10.csv",
+				"plexiglas_WH17.csv",
+				"plexiglas_WN370.csv",
+				"plexiglas_WN670.csv",
+				"plexiglas_WN770.csv",
+				"schreiberglass-Dunkel_Kobaltblau_7882.csv",
+				"schreiberglass-Dunkelgruen_7888.csv",
+				"schreiberglass-Hell_Kobaltblau_7883.csv",
+				"schreiberglass-Hell_Kupferblau_7881.csv",
+				"schreiberglass-Hellgruen_7886.csv",
+				"schreiberglass-Kobaltblau_7884.csv",
+				"schreiberglass-Kupferrot_7878.csv",
+				"schreiberglass-Orange_gelb_7860.csv",
+				"schreiberglass-Rot_7870.csv",
+				"schreiberglass-Zitronengelb_7851.csv"
+			];
+
+			for (var i = 0; i < data_sets.length; i++) {
+				var file = data_sets[i];
+				console.log("parsing ", file);
+				var parse_transmission_csv = function (error, unfiltered) {
+					if (error)
+						throw error;
+
+					var data = unfiltered.filter(function (row) {
+						row.wavelength_nm = +row.wavelength_nm;
+						row.transmission_perc_smoothed = parseFloat(row.transmission_perc_smoothed);
+						return(!isNaN(row.wavelength_nm) && !isNaN(row.transmission_perc_smoothed) && row.wavelength_nm >= wavelength_range.min && row.wavelength_nm <= wavelength_range.max);
+					});
+
+					var id = null;
+					// format the data
+					data.forEach(function (d) {
+						id = id || d.material;
+						d.wavelength_nm = +d.wavelength_nm;
+						d.transmission_perc_smoothed = parseFloat(d.transmission_perc_smoothed);
+					});
+
+					transmission_data[id] = data;
+					svg.append("path")
+							.data([data])
+							.attr("class", "line")
+							.attr("id", id)
+							.attr("d", valueline);
+					var el = document.getElementById(id);
+					el.addEventListener("mouseover", function (event) {
+						highlight('_' + event.target.id);
+					});
+					el.addEventListener("mouseout", function (event) {
+						dehighlight();
+					});
+					var mat_name = id.replace(/_/g, ' ');
+					var list_id = get_list_id(id);
+					var e = create_list_entry(list_id, mat_name);
+					document.getElementById('material_list').append(e);
+					console.log('parsed measurement data.');
+
+					if (Object.keys(transmission_data).length === data_sets.length) {
+						update_filter(wavelength - wavelength_variance, wavelength + wavelength_variance, max_transmission);
+					}
+				};
+
+				d3.csv("data/" + file, parse_transmission_csv);
+			}
+		}
+
+		function update_filter(lower_wl, upper_wl, max_transmission) {
+			var materials = Object.keys(transmission_data);
+			for (var i = 0; i < materials.length; i++) {
+				var m = materials[i];
+				var data = transmission_data[m];
+				var id = null;
+
+				var blocks_wavelength = true;
+				// format the data
+				data.forEach(function (d) {
+					id = id || d.material;
+					d.wavelength_nm = +d.wavelength_nm;
+					d.transmission_perc_smoothed = parseFloat(d.transmission_perc_smoothed);
+					if (d.wavelength_nm >= lower_wl && d.wavelength_nm <= upper_wl) {
+						if (d.transmission_perc_smoothed > max_transmission) {
+							blocks_wavelength = false;
+						}
+					}
+				});
+
+				var list_id = get_list_id(id);
+				var el = document.getElementById(id)
+				var list_el = document.getElementById(list_id);
+				if (blocks_wavelength) {
+					el.classList.add('active');
+					list_el.classList.add('active');
+				} else {
+					el.classList.remove('active');
+					list_el.classList.remove('active');
+				}
+
+			}
+
+			// update limit:
+			var limit_line = document.getElementById('limit');
+			if (limit_line)
+				limit_line.remove();
+			var limit_data = [
+				{wavelength_nm: wavelength_range.min, transmission_perc_smoothed: max_transmission},
+				{wavelength_nm: wavelength_range.max, transmission_perc_smoothed: max_transmission}
+			];
+			svg.append("path")
+					.attr("class", "limit_line")
+					.attr("id", 'limit')
+					.attr("d", valueline(limit_data));
+
+			// update laser spectrum:
+			var spectrum_rect = document.getElementById('spectrum');
+			if (spectrum_rect)
+				spectrum_rect.remove();
+			var x1 = x(lower_wl);
+			var x2 = x(upper_wl);
+			var y1 = y(0);
+			svg.append("rect")
+					.attr("class", "laser_spectrum")
+					.attr("id", 'spectrum')
+					.attr("x", x1)
+					.attr("y", 0)
+					.attr("width", x2 - x1)
+					.attr("height", y1);
+		}
+
+		function create_list_entry(id, text) {
+			var el = document.createElement('li');
+			el.setAttribute('id', id);
+			el.addEventListener("mouseover", function (event) {
+				dehighlight();
+				highlight(event.target.id);
+			});
+			el.addEventListener("mouseout", function (event) {
+				dehighlight();
+			});
+			var content = document.createTextNode(text);
+			el.appendChild(content);
+			return el;
+		}
+
+		function dehighlight() {
+			var highlighted = document.getElementsByClassName('highlight');
+			for (var i = 0; i < highlighted.length; i++) {
+				var item = highlighted[i];
+				item.classList.remove('highlight');
+			}
+		}
+		function highlight(id) {
+			var line_id = id.substr(1);
+			var line = document.getElementById(line_id);
+			if(line.classList.contains('active')){
+				line.classList.add('highlight');
+				var entry = document.getElementById(id);
+				entry.classList.add('highlight');
+			}
+		}
+
+		function get_list_id(id) {
+			return '_' + id;
+		}
+
+		init_data();
+
+	</script>
+	
+</body>
